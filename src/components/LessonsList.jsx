@@ -21,8 +21,15 @@ export default function LessonsList({
   // Compute progress metrics
   const totalLessons = modules.reduce((acc, m) => acc + m.lessons.length, 0);
   const completedCount = progress.completedLessons.length;
+  const classicCount = progress.completedClassic?.length || 0;
+  const modernCount = progress.completedModern?.length || 0;
+  const subtasksSolved = classicCount + modernCount;
+  const totalSubtasks = totalLessons * 2;
+
   const percentage =
     totalLessons > 0 ? Math.round((completedCount / totalLessons) * 100) : 0;
+  const subtaskPercentage =
+    totalSubtasks > 0 ? Math.round((subtasksSolved / totalSubtasks) * 100) : 0;
 
   // Calculate current streak
   const streak =
@@ -44,7 +51,7 @@ export default function LessonsList({
               </span>
             </h1>
             <p className="text-[10px] text-zinc-500 mt-1 font-semibold uppercase tracking-wider">
-              High Curation progression
+              Dual Paradigm Mastery
             </p>
           </div>
         </div>
@@ -82,30 +89,33 @@ export default function LessonsList({
                   strokeWidth="3.5"
                   className="text-amber-500 transition-all duration-500"
                   strokeDasharray={`${2 * Math.PI * 20}`}
-                  strokeDashoffset={`${2 * Math.PI * 20 * (1 - percentage / 100)}`}
+                  strokeDashoffset={`${2 * Math.PI * 20 * (1 - subtaskPercentage / 100)}`}
                   fill="transparent"
                   strokeLinecap="round"
                 />
               </svg>
               <span className="absolute text-[11px] font-bold text-zinc-800">
-                {percentage}%
+                {subtaskPercentage}%
               </span>
             </div>
 
             <div className="flex-1 min-w-0">
               <p className="text-xs font-bold text-zinc-800">
-                {completedCount} of {totalLessons} Units solved
+                {subtasksSolved} of {totalSubtasks} Targets solved
+              </p>
+              <p className="text-[10px] text-zinc-500 mt-0.5 font-medium leading-none">
+                ({completedCount} of {totalLessons} Concepts mastered)
               </p>
               {streak > 0 ? (
-                <p className="text-[11px] text-zinc-600 flex items-center gap-1 mt-1 font-medium">
+                <p className="text-[11px] text-zinc-600 flex items-center gap-1 mt-1.5 font-medium">
                   <Flame className="h-3.5 w-3.5 text-orange-500 fill-orange-500 animate-pulse" />
                   <span className="text-orange-600 font-bold">
                     {streak} Day Streak!
                   </span>
                 </p>
               ) : (
-                <p className="text-[10px] text-zinc-400 mt-1 font-medium">
-                  Submit correct tests to build XP
+                <p className="text-[10px] text-zinc-400 mt-1.5 font-medium">
+                  Solve both styles to master concepts!
                 </p>
               )}
             </div>
@@ -162,6 +172,11 @@ export default function LessonsList({
                   const isCompleted = progress.completedLessons.includes(
                     lesson.id,
                   );
+                  const isClassicCompleted =
+                    progress.completedClassic?.includes(lesson.id);
+                  const isModernCompleted = progress.completedModern?.includes(
+                    lesson.id,
+                  );
                   const isActive = activeLessonId === lesson.id;
 
                   // Label colors
@@ -191,17 +206,47 @@ export default function LessonsList({
                       )}
 
                       <div className="flex items-start gap-3 flex-1 min-w-0">
-                        {/* Status Checkbox/Circle Bullet icons */}
-                        <div className="mt-0.5 flex-shrink-0">
-                          {isCompleted ? (
-                            <CheckCircle2 className="h-5 w-5 text-emerald-500 fill-emerald-500/10" />
-                          ) : isActive ? (
-                            <div className="h-5 w-5 rounded-full border-2 border-amber-500 flex items-center justify-center bg-amber-500/5">
-                              <Play className="h-2 w-2 text-amber-600 fill-amber-600" />
-                            </div>
-                          ) : (
-                            <Circle className="h-5 w-5 text-zinc-400 group-hover:text-zinc-600 transition-colors" />
-                          )}
+                        {/* Status indicators */}
+                        <div className="flex items-center gap-1.5 mt-1 flex-shrink-0">
+                          {/* Classic Loop Indicator */}
+                          <div
+                            title={
+                              isClassicCompleted
+                                ? "Traditional Loop solved"
+                                : "Traditional Loop incomplete"
+                            }
+                            className={`w-3 h-3 rounded-full border flex items-center justify-center transition-all ${
+                              isClassicCompleted
+                                ? "bg-amber-500 border-amber-600 shadow-sm shadow-amber-400/20"
+                                : isActive
+                                  ? "border-amber-500 bg-amber-500/10 animate-pulse"
+                                  : "border-zinc-300 bg-zinc-50"
+                            }`}
+                          >
+                            <span className="text-[6px] font-black text-black leading-none select-none">
+                              L
+                            </span>
+                          </div>
+
+                          {/* Modern ES6+ Indicator */}
+                          <div
+                            title={
+                              isModernCompleted
+                                ? "Modern ES6+ solved"
+                                : "Modern ES6+ incomplete"
+                            }
+                            className={`w-3 h-3 rounded-full border flex items-center justify-center transition-all ${
+                              isModernCompleted
+                                ? "bg-indigo-600 border-indigo-700 shadow-sm shadow-indigo-600/20"
+                                : isActive
+                                  ? "border-amber-500 bg-amber-500/10 animate-pulse"
+                                  : "border-zinc-300 bg-zinc-50"
+                            }`}
+                          >
+                            <span className="text-[6px] font-black text-white leading-none select-none">
+                              M
+                            </span>
+                          </div>
                         </div>
 
                         <div className="flex-1 min-w-0 pr-1">

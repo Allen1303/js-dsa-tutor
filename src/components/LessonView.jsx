@@ -12,7 +12,9 @@ import {
   BookOpen,
   MessageSquare,
   Terminal,
+  Split,
 } from "lucide-react";
+import { PARADIGMS_MAP } from "../data/paradigms";
 
 // Safe JSON Stringifier that guards against circular references (e.g., recursive nodes, cyclic linked lists)
 function safeJsonStringify(val) {
@@ -51,7 +53,7 @@ function tokenizeJavascript(code) {
       // 4. Numbers
       "\\b(\\d+(?:\\.\\d+)?)\\b",
       // 5. Keywords
-      "\\b(const|let|var|function|return|if|else|for|while|do|switch|case|break|continue|class|constructor|new|this|export|import|from|try|catch|throw|finally|instanceof|typeof|in|of|default)\\b",
+      "\\b(const|let|var|function|return|if|else|for|while|do|switch|case|break|continue|class|constructor|new|this|export|import|from|try|catch|throw|finally|instanceof|typeof|in|of|default|length)\\b",
       // 6. Builtins & Class Names (PascalCase or specific, including console)
       "\\b(console|[A-Z]\\w*)\\b",
       // 7. Booleans & special constants
@@ -121,13 +123,115 @@ function tokenizeJavascript(code) {
   return tokens;
 }
 
+function stripCommentsAndStrings(code) {
+  return code
+    .replace(/\/\*[\s\S]*?\*\//g, "") // remove block comments
+    .replace(/\/\/.*/g, "") // remove inline comments
+    .replace(/(["'`])(?:\\.|[^\\])*?\1/g, ""); // remove string literals so comments/strings don't trigger warnings
+}
+
+export function validateParadigm(code, mode, lessonId) {
+  const clean = stripCommentsAndStrings(code);
+
+  if (/\bvar\b/.test(clean)) {
+    return {
+      passed: false,
+      error: `Paradigm Constraint: The "var" declaration is strictly prohibited! Please declare variables using "const" or "let" only.`,
+    };
+  }
+
+  if (mode === "classic") {
+    // --- Traditional Loop Mode Checks ---
+    const functionalMethods = [
+      ".map(",
+      ".filter(",
+      ".reduce(",
+      ".forEach(",
+      ".some(",
+      ".every(",
+    ];
+    for (const method of functionalMethods) {
+      if (clean.includes(method)) {
+        return {
+          passed: false,
+          error: `Paradigm Constraint: Modern declarative method "${method}" is prohibited in Traditional Loop Mode! Please solve this algorithm using manual loops (like for or while) to build critical low-level index mechanics.`,
+        };
+      }
+    }
+
+    // Check for Math.max(...) or spread tricks for finding extrema if max-value
+    if (lessonId === "max-value" && clean.includes("Math.max(")) {
+      return {
+        passed: false,
+        error: `Paradigm Constraint: Math.max is prohibited in Traditional Loop Mode! Please build manual array index comparisons to locate the maximum value.`,
+      };
+    }
+
+    // Check for reverse() or spread reversals in reverse-array
+    if (
+      lessonId === "reverse-array" &&
+      (clean.includes(".reverse(") || clean.includes(".reverseArray"))
+    ) {
+      const usesLoop = clean.includes("for") || clean.includes("while");
+      if (!usesLoop) {
+        return {
+          passed: false,
+          error: `Paradigm Constraint: Reverse helper methods are prohibited in Traditional Loop Mode! Please write a classic reverse loop that populates a new list backwards.`,
+        };
+      }
+    }
+
+    // Check for Array.from or Set mappings in intersection
+    if (
+      lessonId === "intersection" &&
+      (clean.includes("Set(") || clean.includes("Set "))
+    ) {
+      return {
+        passed: false,
+        error: `Paradigm Constraint: ES6 Sets are barred in Traditional Loop Mode! Please scan lookups using standard nested indices or traditional lookups.`,
+      };
+    }
+  } else if (mode === "modern") {
+    // --- Modern ES6+ Mode Checks ---
+    const declarativeWanted = [
+      "sum-numbers",
+      "max-value",
+      "reverse-array",
+      "fizz-buzz",
+      "is-palindrome",
+      "intersection",
+    ];
+    if (declarativeWanted.includes(lessonId)) {
+      if (clean.includes("for ") || clean.includes("while ")) {
+        if (
+          /\bfor\s*\(\s*let\s+\w+\s*=\s*\d+/.test(clean) ||
+          /\bfor\s*\(\s*var\s+\w+\s*=\s*\d+/.test(clean)
+        ) {
+          return {
+            passed: false,
+            error: `Paradigm Constraint: Classic index-incrementing loops are barred in Modern ES6+ Mode! Challenge yourself by using declarative functional operations (like .map(), .reduce(), .filter()) or spread/reversal utilities to achieve functional elegance.`,
+          };
+        }
+      }
+    }
+  }
+
+  return { passed: true };
+}
+
 export default function LessonView({
   lesson,
   progress,
   onLessonCompleted,
   onCodeChange,
 }) {
-  const [code, setCode] = useState(lesson.starterCode);
+  const [currentMode, setCurrentMode] = useState("classic");
+  const [code, setCode] = useState(() => {
+    const savedCode =
+      progress.lessonCode[`${lesson.id}_classic`] ||
+      progress.lessonCode[lesson.id];
+    return savedCode || lesson.starterCode;
+  });
   const [activeTab, setActiveTab] = useState("theory");
   const [isRunning, setIsRunning] = useState(false);
   const [runOutcome, setRunOutcome] = useState(null);
@@ -154,16 +258,32 @@ export default function LessonView({
 
   // Align active code draft state variables
   useEffect(() => {
-    const savedCode = progress.lessonCode[lesson.id];
+    const targetKey = `${lesson.id}_${currentMode}`;
+    const savedCode =
+      progress.lessonCode[targetKey] || progress.lessonCode[lesson.id];
     setCode(savedCode || lesson.starterCode);
     setRunOutcome(null);
     setChatLogs([
       {
         sender: "coach",
-        message: `Hello! I'm your Gemini JavaScript DSA Coach. I analyzed your challenge: **"${lesson.title}"**. Write your solution code on the right and run tests. If you hit any runtime failures, or want me to guide you without giving the source answers, just ask below!`,
+        message: `Hello! I'm your Gemini JavaScript DSA Coach. I analyzed your challenge: **"${lesson.title}"**.
+
+Write your solution code on the right and run tests. Currently, you are working on the **${currentMode === "classic" ? "💻 Traditional Loop Mode" : "⚡ Modern ES6+ Mode"}** challenge workspace! If you hit any runtime failures, or want me to guide you without giving direct solution answers, just ask below!`,
       },
     ]);
-  }, [lesson]);
+  }, [lesson, currentMode]);
+
+  const handleSwitchMode = (mode) => {
+    if (mode === currentMode) return;
+    onCodeChange(`${lesson.id}_${currentMode}`, code);
+    setCurrentMode(mode);
+    setRunOutcome(null);
+
+    const targetKey = `${lesson.id}_${mode}`;
+    const savedCode =
+      progress.lessonCode[targetKey] || progress.lessonCode[lesson.id];
+    setCode(savedCode || lesson.starterCode);
+  };
 
   // Handle scroll synchronization between edit layers and side lines
   const syncScrolls = (e) => {
@@ -188,7 +308,7 @@ export default function LessonView({
       const end = e.currentTarget.selectionEnd;
       const updatedCode = code.substring(0, start) + "  " + code.substring(end);
       setCode(updatedCode);
-      onCodeChange(lesson.id, updatedCode);
+      onCodeChange(`${lesson.id}_${currentMode}`, updatedCode);
 
       setTimeout(() => {
         if (editorRef.current) {
@@ -200,14 +320,60 @@ export default function LessonView({
   };
 
   const handleResetCode = () => {
-    if (confirm("Revert current solution changes back to the starter draft?")) {
+    if (
+      confirm(
+        `Revert current ${currentMode === "classic" ? "Traditional Loop" : "Modern ES6+"} workspace draft back to the starter template?`,
+      )
+    ) {
       setCode(lesson.starterCode);
-      onCodeChange(lesson.id, lesson.starterCode);
+      onCodeChange(`${lesson.id}_${currentMode}`, lesson.starterCode);
       setRunOutcome(null);
     }
   };
 
   const handleRunTests = () => {
+    // 1. Double check copy paste duplication
+    const otherMode = currentMode === "classic" ? "modern" : "classic";
+    const otherModeCode =
+      progress.lessonCode[`${lesson.id}_${otherMode}`] || "";
+    if (otherModeCode.trim() !== "" && code.trim() === otherModeCode.trim()) {
+      setRunOutcome({
+        passed: false,
+        logs: ["Validation Failed: Code duplication check failed."],
+        testResults: [
+          {
+            id: "validation-dup",
+            description: "Validate Paradigm Integration Integrity",
+            expression: "currentCode !== otherModeCode",
+            expectedValue: true,
+            actualValue: false,
+            error: `Integrity Alert: Your solution is identical to your ${otherMode === "classic" ? "Traditional Loop" : "Modern ES6+"} solution! Please write them using their respective paradigms to expand your JS DSA mastery.`,
+          },
+        ],
+      });
+      return;
+    }
+
+    // 2. Paradigm enforce checks
+    const validation = validateParadigm(code, currentMode, lesson.id);
+    if (!validation.passed) {
+      setRunOutcome({
+        passed: false,
+        logs: ["Validation Failed: Paradigm syntax constraint breached."],
+        testResults: [
+          {
+            id: "validation-rule",
+            description: `Verify ${currentMode === "classic" ? "Classic Loop" : "Modern ES6+"} Design Patterns`,
+            expression: "checkParadigmSyntax()",
+            expectedValue: true,
+            actualValue: false,
+            error: validation.error,
+          },
+        ],
+      });
+      return;
+    }
+
     setIsRunning(true);
     setTimeout(() => {
       const outcome = runCode(code, lesson.testCases);
@@ -215,7 +381,7 @@ export default function LessonView({
       setIsRunning(false);
 
       if (outcome.passed) {
-        onLessonCompleted(lesson.id, code);
+        onLessonCompleted(lesson.id, currentMode, code);
       }
     }, 400);
   };
@@ -254,7 +420,8 @@ Strict rules:
 3. Instead, ask exactly ONE or TWO precision questions that trigger their own insights.
 4. If their code fails tests, point out the conceptual gap (e.g., "Look at how your loops are initialized. What value does it begin with, and what is the last valid index?") without giving the fix.
 5. Provide high-level hints about the algorithm (e.g., "Think about using a slow and fast pointer to find the middle of the list. What happens when the fast pointer reaches the end?").
-6. Keep replies brief, under 3 sentences, and highly encouraging.`
+6. Keep replies brief, under 3 sentences, and highly encouraging.
+7. Fully accept, support, and encourage older syntax like classic "for" loops, "var", and standard function definitions. Do not suggest ES5/ES6 modernization unless they ask for it.`
             : `You are a warm, helpful, and highly-encouraging JavaScript DSA Tutor, similar to an elite mentor.
 Your target is to guide them conceptually. Follow these strict rules:
 1. NEVER write the complete direct code solution. Only write small, isolated pseudo-code blocks, logic guides, or helper representations.
@@ -262,7 +429,8 @@ Your target is to guide them conceptually. Follow these strict rules:
 3. Be highly supportive. Speak directly, in a light, cheerful, and professional tone.
 4. If they have test failures, analyze their code and explain why specific tests are failing (e.g., "Your base case returns undefined instead of 0").
 5. Answer in beautifully structured, clean markdown.
-6. Address the student's natural query directly.`;
+6. Address the student's natural query directly.
+7. Fully accept, support, and encourage older syntax like classic "for" loops, "var", and standard function definitions. Do not suggest ES5/ES6 modernization unless they ask for it.`;
 
         // Direct client-side JSON fetch to Gemini Developer Endpoint
         const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${keyToUse}`;
@@ -355,7 +523,13 @@ ${queryText}
       } else if (token.type === "number") {
         cls = "text-[#d19a66]"; // Orange/Peach
       } else if (token.type === "keyword") {
-        cls = "text-[#c678dd] font-bold"; // Purple
+        if (token.text === "length") {
+          cls = "text-[#e06c75]"; // Atom One Dark Coral/Red specifically for length
+        } else if (["const", "let", "var"].includes(token.text)) {
+          cls = "text-[#c678dd] font-bold"; // Atom One Dark Purple for variable declaration triggers
+        } else {
+          cls = "text-[#c678dd] font-bold"; // Classic Purple for other keywords (return, if, for, etc)
+        }
       } else if (token.type === "class") {
         cls = "text-[#e5c07b]"; // Yellow/Gold
       } else if (token.type === "boolean") {
@@ -375,6 +549,195 @@ ${queryText}
         </span>
       );
     });
+  };
+
+  const renderParadigmsExplorer = () => {
+    const paradigm = PARADIGMS_MAP[lesson.id];
+    if (!paradigm) {
+      return (
+        <div className="bg-white border border-zinc-200 rounded-2xl p-6 text-center shadow-sm">
+          <Split className="h-8 w-8 text-amber-500 mx-auto mb-3 animate-pulse" />
+          <h3 className="text-sm font-black text-zinc-900">
+            Comparative Analysis Coming Soon
+          </h3>
+          <p className="text-xs text-zinc-500 mt-1">
+            This unit comparison is being prepared. Enjoy other sections!
+          </p>
+        </div>
+      );
+    }
+
+    return (
+      <div className="space-y-6">
+        {/* Header Block with big-O summary */}
+        <div className="bg-white border border-zinc-200 rounded-2xl p-5 shadow-sm">
+          <h3 className="text-sm font-black text-zinc-900 border-b border-zinc-100 pb-3 flex items-center justify-between gap-2 flex-wrap">
+            <span className="flex items-center gap-2">
+              <Split className="h-4 w-4 text-amber-500 animate-spin-once" />
+              {paradigm.title} - Paradigm Contrast
+            </span>
+            <span className="text-[10px] font-mono bg-amber-50 text-amber-700 border border-amber-200 px-2 py-0.5 rounded-full font-bold">
+              DSA Dual Study
+            </span>
+          </h3>
+          <p className="text-xs text-zinc-600 font-medium leading-relaxed mt-3">
+            {paradigm.concept} Here, we contrast the performance, memory
+            footprint, and readability tradeoffs of traditional pointer loops
+            with elegant modern ES6+ equivalents.
+          </p>
+        </div>
+
+        {/* Traditional / Older Syntax Loop Panel */}
+        <div className="bg-white border border-zinc-200 rounded-2xl overflow-hidden shadow-sm">
+          {/* Header */}
+          <div className="bg-zinc-50 border-b border-zinc-200 p-4 flex items-center justify-between gap-3 flex-wrap">
+            <div>
+              <span className="text-[10px] font-extrabold text-amber-650 tracking-wider block uppercase">
+                Paradigm 1:
+              </span>
+              <h4 className="text-xs font-bold text-zinc-800">
+                Classic / Loop Syntax
+              </h4>
+            </div>
+            {/* Big O Indicators */}
+            <div className="flex gap-1.5">
+              <span className="text-[10px] bg-amber-500/10 text-[#d97706] border border-amber-500/20 px-2.5 py-1 rounded-lg font-mono font-bold">
+                Time: {paradigm.classic.time}
+              </span>
+              <span className="text-[10px] bg-zinc-100 text-zinc-700 border border-zinc-200 px-2.5 py-1 rounded-lg font-mono font-bold">
+                Space: {paradigm.classic.space}
+              </span>
+            </div>
+          </div>
+          {/* Code display */}
+          <div className="bg-[#282c34] p-4 font-mono text-xs overflow-x-auto relative shadow-inner">
+            <pre className="text-[#abb2bf] leading-relaxed">
+              <code>{renderCodeTokens(paradigm.classic.code)}</code>
+            </pre>
+            <button
+              onClick={() => {
+                if (
+                  window.confirm(
+                    "Do you want to write this classic loop-style code into your Traditional Loop worksheet? (Your current work there will be updated)",
+                  )
+                ) {
+                  handleSwitchMode("classic");
+                  setCode(paradigm.classic.code);
+                  onCodeChange(`${lesson.id}_classic`, paradigm.classic.code);
+                }
+              }}
+              className="absolute right-3 top-3 text-[10px] bg-zinc-850/90 hover:bg-zinc-700 text-zinc-300 border border-zinc-700 px-3 py-1.5 rounded-lg font-bold transition-all shadow active:scale-95 cursor-pointer flex items-center gap-1"
+            >
+              💻 Try Loop style
+            </button>
+          </div>
+          {/* Explanation */}
+          <div className="p-4 bg-zinc-50/50 border-t border-zinc-100">
+            <p className="text-[#4b5263] font-mono text-[9px] uppercase tracking-wider font-extrabold mb-1">
+              Paradigm Highlights:
+            </p>
+            <p className="text-xs text-zinc-650 leading-relaxed font-semibold">
+              {paradigm.classic.explanation}
+            </p>
+          </div>
+        </div>
+
+        {/* Modern / Declarative ES6 Panel */}
+        <div className="bg-white border border-zinc-200 rounded-2xl overflow-hidden shadow-sm">
+          {/* Header */}
+          <div className="bg-zinc-50 border-b border-zinc-200 p-4 flex items-center justify-between gap-3 flex-wrap">
+            <div>
+              <span className="text-[10px] font-extrabold text-[#2563eb] tracking-wider block uppercase">
+                Paradigm 2:
+              </span>
+              <h4 className="text-xs font-bold text-zinc-800">
+                Modern / ES6+ Declarative
+              </h4>
+            </div>
+            {/* Big O Indicators */}
+            <div className="flex gap-1.5">
+              <span className="text-[10px] bg-blue-500/10 text-blue-700 border border-blue-500/20 px-2.5 py-1 rounded-lg font-mono font-bold">
+                Time: {paradigm.modern.time}
+              </span>
+              <span className="text-[10px] bg-zinc-100 text-zinc-700 border border-zinc-200 px-2.5 py-1 rounded-lg font-mono font-bold">
+                Space: {paradigm.modern.space}
+              </span>
+            </div>
+          </div>
+          {/* Code display */}
+          <div className="bg-[#282c34] p-4 font-mono text-xs overflow-x-auto relative shadow-inner">
+            <pre className="text-[#abb2bf] leading-relaxed">
+              <code>{renderCodeTokens(paradigm.modern.code)}</code>
+            </pre>
+            <button
+              onClick={() => {
+                if (
+                  window.confirm(
+                    "Do you want to write this modern ES6 declarative code into your Modern ES6+ worksheet? (Your current work there will be updated)",
+                  )
+                ) {
+                  handleSwitchMode("modern");
+                  setCode(paradigm.modern.code);
+                  onCodeChange(`${lesson.id}_modern`, paradigm.modern.code);
+                }
+              }}
+              className="absolute right-3 top-3 text-[10px] bg-zinc-850/90 hover:bg-zinc-700 text-zinc-300 border border-zinc-700 px-3 py-1.5 rounded-lg font-bold transition-all shadow active:scale-95 cursor-pointer flex items-center gap-1"
+            >
+              ⚡ Try ES5/ES6 style
+            </button>
+          </div>
+          {/* Explanation */}
+          <div className="p-4 bg-zinc-50/50 border-t border-zinc-100">
+            <p className="text-[#4b5263] font-mono text-[9px] uppercase tracking-wider font-extrabold mb-1">
+              Paradigm Highlights:
+            </p>
+            <p className="text-xs text-zinc-650 leading-relaxed font-semibold">
+              {paradigm.modern.explanation}
+            </p>
+          </div>
+        </div>
+
+        {/* If Math Optional Strategy Exists (like sum-numbers optimal) */}
+        {paradigm.mathPerfect && (
+          <div className="bg-amber-50/50 border border-amber-500/20 p-5 rounded-2xl shadow-sm">
+            <h4 className="text-xs font-extrabold text-[#b45309] tracking-wider uppercase flex items-center gap-1.5 font-sans">
+              🚀 {paradigm.mathPerfect.title}
+            </h4>
+            <div className="bg-[#2c2822] p-3.5 my-3 rounded-xl border border-amber-950/20 font-mono text-xs relative overflow-x-auto shadow-inner">
+              <pre>
+                <code>{renderCodeTokens(paradigm.mathPerfect.code)}</code>
+              </pre>
+              <button
+                onClick={() => {
+                  if (
+                    window.confirm(
+                      "Do you want to write this optimal mathematical solution into your Modern ES6+ worksheet?",
+                    )
+                  ) {
+                    handleSwitchMode("modern");
+                    setCode(paradigm.mathPerfect.code);
+                    onCodeChange(
+                      `${lesson.id}_modern`,
+                      paradigm.mathPerfect.code,
+                    );
+                  }
+                }}
+                className="absolute right-3 top-2.5 text-[10px] bg-amber-950/80 hover:bg-amber-900 border border-amber-800/40 px-2.5 py-1.5 rounded-lg text-amber-200 font-extrabold active:scale-95 cursor-pointer"
+              >
+                Inject Formula
+              </button>
+            </div>
+            <p className="text-xs text-amber-950 leading-relaxed font-medium">
+              <span className="font-extrabold">Tradeoff:</span>{" "}
+              {paradigm.mathPerfect.explanation} (Time:{" "}
+              <code className="font-bold">{paradigm.mathPerfect.time}</code>,
+              Space:{" "}
+              <code className="font-bold">{paradigm.mathPerfect.space}</code>)
+            </p>
+          </div>
+        )}
+      </div>
+    );
   };
 
   const renderTheoryMarkdown = (text) => {
@@ -475,7 +838,7 @@ ${queryText}
           <div className="flex gap-1 bg-white p-1 rounded-xl border border-zinc-200">
             <button
               onClick={() => setActiveTab("theory")}
-              className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg text-[11px] font-extrabold tracking-wide transition-all ${
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[11px] font-extrabold tracking-wide transition-all ${
                 activeTab === "theory"
                   ? "bg-amber-500 text-white shadow-sm shadow-amber-500/10"
                   : "text-zinc-500 hover:text-zinc-800"
@@ -485,9 +848,20 @@ ${queryText}
               Lesson Guide
             </button>
             <button
+              onClick={() => setActiveTab("paradigms")}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[11px] font-extrabold tracking-wide transition-all ${
+                activeTab === "paradigms"
+                  ? "bg-amber-500 text-white shadow-sm shadow-amber-500/10"
+                  : "text-zinc-500 hover:text-zinc-800"
+              }`}
+            >
+              <Split className="h-3.5 w-3.5 text-zinc-500" />
+              Paradigm compare
+            </button>
+            <button
               id="ai-coach-tab-button"
               onClick={() => setActiveTab("coach")}
-              className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg text-[11px] font-extrabold tracking-wide transition-all relative ${
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[11px] font-extrabold tracking-wide transition-all relative ${
                 activeTab === "coach"
                   ? "bg-amber-500 text-white shadow-sm shadow-amber-500/10"
                   : "text-zinc-500 hover:text-zinc-800"
@@ -578,6 +952,8 @@ ${queryText}
                 </div>
               </div>
             </article>
+          ) : activeTab === "paradigms" ? (
+            renderParadigmsExplorer()
           ) : (
             // Chat assistant layout
             <div className="flex flex-col h-full bg-white p-5 rounded-2xl border border-zinc-200 shadow-sm">
@@ -767,6 +1143,57 @@ ${queryText}
             </div>
           </div>
 
+          {/* Challenge Workspace Mode Switcher */}
+          <div className="flex border-b border-[#111215] bg-[#1a1c1f] p-2 items-center justify-between select-none px-3 flex-wrap gap-2">
+            <div className="flex gap-2">
+              <button
+                onClick={() => handleSwitchMode("classic")}
+                id="classic-workspace-tab"
+                className={`px-3 py-1.5 rounded-lg text-[10px] font-extrabold tracking-wider transition-all flex items-center gap-1.5 cursor-pointer ${
+                  currentMode === "classic"
+                    ? "bg-amber-500/10 text-amber-500 border border-amber-500/30 font-black"
+                    : "text-zinc-400 hover:text-zinc-200 border border-transparent hover:bg-zinc-800/20"
+                }`}
+              >
+                <span
+                  className={`w-1.5 h-1.5 rounded-full ${progress.completedClassic?.includes(lesson.id) ? "bg-emerald-500 shadow shadow-emerald-500/80" : "bg-amber-500/40 animate-pulse"}`}
+                />
+                Traditional Loop (classic)
+              </button>
+              <button
+                onClick={() => handleSwitchMode("modern")}
+                id="modern-workspace-tab"
+                className={`px-3 py-1.5 rounded-lg text-[10px] font-extrabold tracking-wider transition-all flex items-center gap-1.5 cursor-pointer ${
+                  currentMode === "modern"
+                    ? "bg-indigo-500/10 text-indigo-400 border border-indigo-500/30 font-black"
+                    : "text-zinc-400 hover:text-zinc-200 border border-transparent hover:bg-zinc-800/20"
+                }`}
+              >
+                <span
+                  className={`w-1.5 h-1.5 rounded-full ${progress.completedModern?.includes(lesson.id) ? "bg-emerald-500 shadow shadow-emerald-500/80" : "bg-indigo-500/40 animate-pulse"}`}
+                />
+                Modern ES6+ (declarative)
+              </button>
+            </div>
+
+            <div className="hidden sm:flex items-center gap-2">
+              <span className="text-[9px] font-mono text-zinc-500 font-bold uppercase tracking-wider">
+                Constraint:
+              </span>
+              <span
+                className={`text-[9px] font-mono px-2 py-0.5 rounded-md border font-extrabold ${
+                  currentMode === "classic"
+                    ? "bg-amber-950/20 border-amber-800/30 text-amber-500"
+                    : "bg-indigo-950/20 border-indigo-800/30 text-indigo-400"
+                }`}
+              >
+                {currentMode === "classic"
+                  ? "NO var, NO .map/filter/reduce/forEach"
+                  : "NO var, NO classic index loops"}
+              </span>
+            </div>
+          </div>
+
           {/* Scrolling interactive IDE grid */}
           <div className="flex-1 min-h-0 flex relative">
             {/* Split layout code typing layers */}
@@ -801,7 +1228,7 @@ ${queryText}
                   value={code}
                   onChange={(e) => {
                     setCode(e.target.value);
-                    onCodeChange(lesson.id, e.target.value);
+                    onCodeChange(`${lesson.id}_${currentMode}`, e.target.value);
                   }}
                   onScroll={syncScrolls}
                   onKeyDown={handleKeyDown}

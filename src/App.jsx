@@ -18,10 +18,12 @@ import {
   BookOpenCheck,
 } from "lucide-react";
 
-const LOCAL_STORAGE_KEY = "js_dsa_masterclass_progress_v1";
+const LOCAL_STORAGE_KEY = "js_dsa_masterclass_progress_v2";
 
 const defaultProgress = {
-  completedLessons: [],
+  completedLessons: [], // both solved
+  completedClassic: [], // traditional loop solved
+  completedModern: [], // modern ES6 solved
   lessonCode: {},
   xp: 0,
 };
@@ -43,10 +45,26 @@ export default function App() {
   };
 
   useEffect(() => {
-    const saved = localStorage.getItem(LOCAL_STORAGE_KEY);
+    const saved =
+      localStorage.getItem(LOCAL_STORAGE_KEY) ||
+      localStorage.getItem("js_dsa_masterclass_progress_v1");
     if (saved) {
       try {
-        setProgress(JSON.parse(saved));
+        const parsed = JSON.parse(saved);
+        // Migrates legacy state beautifully if they completed lessons previously
+        const completedLessons = parsed.completedLessons || [];
+        const completedClassic = parsed.completedClassic || [
+          ...completedLessons,
+        ];
+        const completedModern = parsed.completedModern || [...completedLessons];
+
+        setProgress({
+          completedLessons,
+          completedClassic,
+          completedModern,
+          lessonCode: parsed.lessonCode || {},
+          xp: parsed.xp || completedLessons.length * 55 || 0,
+        });
       } catch (err) {
         console.error("Failed to parse saved progress state", err);
       }
@@ -72,27 +90,55 @@ export default function App() {
     localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(updated));
   };
 
-  const handleLessonCompleted = (lessonId, finalCode) => {
-    const wasAlreadyCompleted = progress.completedLessons.includes(lessonId);
+  const handleLessonCompleted = (lessonId, mode, finalCode) => {
+    const isClassic = mode === "classic";
+    const alreadyCompletedClassic =
+      progress.completedClassic.includes(lessonId);
+    const alreadyCompletedModern = progress.completedModern.includes(lessonId);
 
-    const updatedCompleted = wasAlreadyCompleted
+    let updatedClassic = alreadyCompletedClassic
+      ? progress.completedClassic
+      : [...progress.completedClassic, lessonId];
+
+    let updatedModern = alreadyCompletedModern
+      ? progress.completedModern
+      : [...progress.completedModern, lessonId];
+
+    let xpGained = 0;
+    if (isClassic && !alreadyCompletedClassic) {
+      xpGained += 20; // 20 XP for Task 1: Traditional Loop Mode
+    } else if (!isClassic && !alreadyCompletedModern) {
+      xpGained += 20; // 20 XP for Task 2: Modern ES6 Mode
+    }
+
+    const isNowMastered =
+      updatedClassic.includes(lessonId) && updatedModern.includes(lessonId);
+    const wasAlreadyMastered = progress.completedLessons.includes(lessonId);
+
+    let updatedCompleted = wasAlreadyMastered
       ? progress.completedLessons
-      : [...progress.completedLessons, lessonId];
+      : isNowMastered
+        ? [...progress.completedLessons, lessonId]
+        : progress.completedLessons;
 
-    const updatedXp = wasAlreadyCompleted ? progress.xp : progress.xp + 25; // Gain 25 XP for first solve!
+    if (isNowMastered && !wasAlreadyMastered) {
+      xpGained += 15; // 15 Bonus XP for completely mastering both modes under the concept!
+    }
 
     const updatedCode = {
       ...progress.lessonCode,
-      [lessonId]: finalCode,
+      [`${lessonId}_${mode}`]: finalCode,
     };
 
     saveProgressState({
       completedLessons: updatedCompleted,
+      completedClassic: updatedClassic,
+      completedModern: updatedModern,
       lessonCode: updatedCode,
-      xp: updatedXp,
+      xp: progress.xp + xpGained,
     });
 
-    if (!wasAlreadyCompleted) {
+    if (isNowMastered && !wasAlreadyMastered) {
       setShowCelebration(true);
       setTimeout(() => setShowCelebration(false), 3100);
     }
@@ -120,6 +166,7 @@ export default function App() {
     ) {
       setProgress(defaultProgress);
       localStorage.removeItem(LOCAL_STORAGE_KEY);
+      localStorage.removeItem("js_dsa_masterclass_progress_v1");
       setActiveLessonId(null);
     }
   };
